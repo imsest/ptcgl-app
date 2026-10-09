@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PTCGL 検討</title>
+<meta name="theme-color" content="#141B2E">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PTCGL検討">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=Barlow+Condensed:wght@500;700&display=swap">
+<style>
+/* 検討盤：深い藍の盤面、自分=青・相手=珊瑚、強調は金だけ。単一のダークテーマ */
+:root {
+  --bg: #141B2E; --surface: #1D2742; --surface-2: #232E4D; --line: #2C3858; --grid: #232E4B;
+  --ink: #E9EDF6; --muted: #93A0BD; --me: #5AA9FF; --opp: #FF7A66; --gold: #F2C14E; --on-gold: #1A1608;
+  --me-t2: rgba(90,169,255,.18); --me-t1: rgba(90,169,255,.09); --even-t: rgba(147,160,189,.12);
+  --opp-t1: rgba(255,122,102,.09); --opp-t2: rgba(255,122,102,.18); --gold-t: rgba(242,193,78,.06);
+  --jp: 'Zen Kaku Gothic New', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', sans-serif;
+  --num: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+  --top: env(safe-area-inset-top, 0px); --bottom: env(safe-area-inset-bottom, 0px);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); }
+body { font-family: var(--jp); font-size: 15px; line-height: 1.75; -webkit-text-size-adjust: 100%; overscroll-behavior-y: none; }
+button, input, textarea, select { font: inherit; color: inherit; }
+[hidden] { display: none !important; }
+.num { font-family: var(--num); font-variant-numeric: tabular-nums; }
+
+/* ヘッダーと下部タブ */
+.top { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: calc(var(--top) + 10px) 16px 10px;
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--line); }
+.top h1 { margin: 0; font-size: 18px; font-weight: 900; letter-spacing: .02em; }
+.top .status { color: var(--muted); font-size: 12px; text-align: right; }
+.top .status.busy { color: var(--gold); }
+main { max-width: 680px; margin: 0 auto; padding: 14px 16px calc(84px + var(--bottom)); }
+.tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; display: grid; grid-template-columns: repeat(5, 1fr);
+  background: rgba(20,27,46,.96); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border-top: 1px solid var(--line); padding-bottom: var(--bottom); }
+.tabs button { border: 0; background: none; padding: 9px 0 10px; color: var(--muted); font-size: 11px; font-weight: 700;
+  display: grid; justify-items: center; gap: 2px; cursor: pointer; }
+.tabs svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.tabs button[aria-current="page"] { color: var(--gold); }
+
+/* 共通部品 */
+h2 { font-size: 16px; font-weight: 700; margin: 26px 0 10px; padding-left: 10px; border-left: 3px solid var(--gold); }
+h2:first-child { margin-top: 6px; }
+.hint { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 6px 0 10px; }
+.notice { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; color: var(--muted); font-size: 14px; line-height: 1.65; margin: 8px 0 12px; }
+.notice b { color: var(--ink); }
+.notice.warn { border-color: var(--gold); }
+.empty { color: var(--muted); padding: 22px 0; line-height: 1.7; }
+label.f { display: block; color: var(--muted); font-size: 13px; margin: 12px 0 4px; }
+input[type=text], input[type=password], textarea, select {
+  width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 11px 12px;
+  font-size: 16px; /* iPhoneの自動拡大を防ぐ */ line-height: 1.5; outline: none; }
+textarea { resize: vertical; min-height: 90px; }
+input:focus, textarea:focus, select:focus { border-color: var(--gold); }
+select { appearance: none; -webkit-appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 52%, calc(100% - 13px) 52%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 34px; }
+.btn { display: block; width: 100%; min-height: 48px; margin-top: 10px; border-radius: 14px; border: 1px solid var(--line);
+  background: transparent; font-weight: 700; font-size: 16px; cursor: pointer; }
+.btn:active { transform: scale(.99); }
+.btn.primary { background: var(--gold); color: var(--on-gold); border: 0; }
+.btn:disabled { opacity: .45; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.row2 .btn { margin-top: 10px; }
+.link { background: none; border: 0; color: var(--me); font-size: 14px; padding: 4px 0; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.panel { border: 1px solid var(--line); border-radius: 16px; padding: 14px; margin: 10px 0; }
+.toast { position: fixed; left: 50%; bottom: calc(80px + var(--bottom)); transform: translateX(-50%); z-index: 10;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; padding: 9px 18px; font-size: 14px;
+  max-width: calc(100% - 32px); text-align: center; }
+
+/* 検討の手順 */
+.steps { list-style: none; margin: 4px 0 0; padding: 0; }
+.steps li { display: grid; grid-template-columns: 26px 1fr; gap: 8px; padding: 7px 0; font-size: 14px; }
+.steps .dot { width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--line); display: grid; place-items: center;
+  font-family: var(--num); font-size: 13px; color: var(--muted); margin-top: 1px; }
+.steps li.active .dot { border-color: var(--gold); color: var(--gold); animation: pulse 1.2s ease-in-out infinite; }
+.steps li.done .dot { background: var(--me); border-color: var(--me); color: var(--bg); }
+.steps li.warn .dot { background: var(--gold); border-color: var(--gold); color: var(--on-gold); }
+.steps .t { font-weight: 700; }
+.steps .d { display: block; color: var(--muted); font-size: 13px; line-height: 1.55; }
+@keyframes pulse { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .steps li.active .dot { animation: none; } }
+
+/* 検討結果 */
+.verdict { padding: 6px 0 14px; border-bottom: 1px solid var(--line); }
+.verdict .top2 { display: flex; align-items: center; gap: 14px; }
+.verdict .result { font-size: 42px; font-weight: 900; line-height: 1; }
+.facts { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; font-size: 12px; color: var(--muted); flex: 1; min-width: 0; }
+.facts b { display: block; color: var(--ink); font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
+.verdict p { margin: 12px 0 0; font-size: 14px; }
+.meter { margin: 16px 0 4px; }
+.meter .now { font-size: 13px; margin-bottom: 5px; }
+.meter .now b { font-family: var(--num); font-size: 22px; margin: 0 4px 0 6px; }
+.bar { position: relative; height: 11px; border-radius: 999px; background: linear-gradient(90deg, var(--opp) 0 50%, var(--me) 50% 100%); overflow: hidden; }
+.bar i { position: absolute; top: 0; bottom: 0; background: var(--bg); opacity: .78; }
+.scale { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin-top: 3px; }
+.chart svg { display: block; width: 100%; height: auto; margin-top: 8px; }
+.legend { color: var(--muted); font-size: 12px; display: flex; gap: 14px; flex-wrap: wrap; }
+.swing { border: 1px solid var(--gold); border-radius: 16px; padding: 13px 14px; margin: 10px 0 6px; background: var(--gold-t); }
+.swing .head { display: flex; align-items: center; gap: 8px; }
+.swing .t { font-family: var(--num); font-size: 28px; font-weight: 700; color: var(--gold); line-height: 1; }
+.swing .conf { margin-left: auto; color: var(--muted); font-size: 11px; border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; }
+.swing p { margin: 8px 0 0; font-size: 14px; }
+.swing .k { display: block; color: var(--muted); font-size: 12px; margin-top: 10px; }
+.swing .play { font-weight: 700; font-size: 15px; line-height: 1.6; }
+.swing ol { margin: 2px 0 0; padding-left: 20px; font-size: 14px; }
+.deep { margin-top: 8px; }
+.record { border-top: 1px solid var(--line); }
+.record details { border-bottom: 1px solid var(--line); }
+.record summary { list-style: none; cursor: pointer; padding: 11px 2px; }
+.record summary::-webkit-details-marker { display: none; }
+.record .r1 { display: flex; align-items: center; gap: 7px; }
+.record .n { font-family: var(--num); font-size: 20px; font-weight: 700; color: var(--muted); min-width: 34px; }
+.who { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; }
+.who.me { color: var(--me); border: 1px solid var(--me); } .who.opp { color: var(--opp); border: 1px solid var(--opp); }
+.ev { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; }
+.ev.s2 { color: var(--me); background: var(--me-t2); } .ev.s1 { color: var(--me); background: var(--me-t1); }
+.ev.s0 { color: var(--muted); background: var(--even-t); } .ev.sm1 { color: var(--opp); background: var(--opp-t1); }
+.ev.sm2 { color: var(--opp); background: var(--opp-t2); }
+.flag { color: var(--gold); font-size: 11px; font-weight: 700; margin-left: auto; }
+.chev { color: var(--muted); font-size: 12px; margin-left: auto; transition: transform .15s; }
+.flag + .chev { margin-left: 6px; }
+details[open] > summary .chev { transform: rotate(180deg); }
+.record .sum { margin: 4px 0 0 41px; font-size: 14px; line-height: 1.6; }
+.record .pz { display: block; color: var(--muted); font-size: 12px; }
+.record .body { margin: 0 0 12px 41px; font-size: 14px; }
+.record .body p { margin: 8px 0 0; line-height: 1.7; }
+.k2 { display: block; color: var(--muted); font-size: 12px; }
+.better { border-left: 3px solid var(--gold); padding-left: 9px; }
+.board { display: grid; gap: 4px; font-size: 13px; background: var(--surface); border-radius: 10px; padding: 8px 10px; margin-top: 8px; }
+.board span { color: var(--muted); }
+ul.plain { margin: 0; padding-left: 20px; }
+
+/* 文章の回答 */
+.md h3 { font-size: 15px; margin: 18px 0 6px; padding-left: 9px; border-left: 3px solid var(--gold); }
+.md h3:first-child { margin-top: 4px; }
+.md p { margin: 6px 0; } .md ul, .md ol { margin: 4px 0; padding-left: 20px; } .md li { margin: 2px 0; }
+.md a { color: var(--me); overflow-wrap: anywhere; }
+.meta-line { color: var(--muted); font-size: 12px; margin-top: 8px; line-height: 1.6; }
+.sources { font-size: 13px; color: var(--muted); } .sources a { color: var(--me); overflow-wrap: anywhere; }
+.cursor::after { content: "▍"; color: var(--gold); animation: pulse 1s infinite; }
+
+/* 履歴・デッキ */
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 4px 0; }
+.stats div { border: 1px solid var(--line); border-radius: 14px; padding: 9px 4px; text-align: center; color: var(--muted); font-size: 12px; }
+.stats b { display: block; font-family: var(--num); font-size: 28px; color: var(--ink); line-height: 1.1; }
+.list { border-top: 1px solid var(--line); }
+.list button { width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 12px 2px;
+  display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.list .res { font-weight: 900; font-size: 15px; min-width: 2.6em; }
+.list .main { flex: 1; min-width: 0; } .list .main b { display: block; overflow-wrap: anywhere; font-weight: 700; }
+.list .sub { color: var(--muted); font-size: 12px; }
+.mu div { display: flex; justify-content: space-between; gap: 10px; padding: 9px 2px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.mu span:first-child { min-width: 0; overflow-wrap: anywhere; } .mu span:last-child { white-space: nowrap; color: var(--muted); }
+.mu b { font-family: var(--num); font-size: 17px; color: var(--ink); margin-left: 3px; }
+.count4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 8px 0; }
+.count4 div { border: 1px solid var(--line); border-radius: 12px; padding: 6px 2px; text-align: center; color: var(--muted); font-size: 11px; }
+.count4 b { display: block; font-family: var(--num); font-size: 22px; color: var(--ink); line-height: 1.1; }
+.count4 .ok b { color: var(--me); } .count4 .ng b { color: var(--opp); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 4px; }
+.chip { border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; background: none; font-size: 14px; cursor: pointer; }
+.chip[aria-pressed="true"] { border-color: var(--gold); color: var(--gold); }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>PTCGL 検討</h1>
+  <span class="status" id="topStatus"></span>
+</header>
+
+<main>
+  <!-- 検討 -->
+  <section id="v-review" data-view>
+    <div id="composer">
+      <h2>対局を検討する</h2>
+      <p class="hint">PTCGL の対戦終了画面で「バトルログ」を開き、全文をコピーしてから貼り付けます。</p>
+      <label class="f" for="logDeck">使ったデッキ</label>
+      <select id="logDeck"></select>
+      <label class="f" for="logText">バトルログ</label>
+      <textarea id="logText" rows="6" placeholder="ここに貼り付け"></textarea>
+      <button class="link" id="pasteBtn" type="button">クリップボードから貼り付け</button>
+      <p class="hint" id="logInfo"></p>
+      <label class="f" for="logExtra">補足（任意）</label>
+      <textarea id="logExtra" rows="2" placeholder="ターン5で手札にボスの指令があった、など"></textarea>
+      <button class="btn primary" id="analyzeBtn" type="button" disabled>この対局を検討する</button>
+    </div>
+    <div id="progress" hidden>
+      <h2>検討しています</h2>
+      <ol class="steps" id="steps"></ol>
+    </div>
+    <div id="result"></div>
+  </section>
+
+  <!-- 履歴 -->
+  <section id="v-history" data-view hidden></section>
+
+  <!-- デッキ -->
+  <section id="v-decks" data-view hidden>
+    <h2>デッキ</h2>
+    <div class="chips" id="deckChips"></div>
+    <div class="panel">
+      <label class="f" for="deckName" style="margin-top:0">デッキ名</label>
+      <input type="text" id="deckName" placeholder="メガサメハダーex">
+      <label class="f" for="deckText">デッキリスト（PTCGLの「エクスポート」をそのまま貼り付け）</label>
+      <textarea id="deckText" rows="8"></textarea>
+      <div class="count4" id="deckCount"></div>
+      <div class="row2"><button class="btn primary" id="deckSave" type="button">保存する</button><button class="btn" id="deckDelete" type="button">削除</button></div>
+    </div>
+    <h2>戦い方と展開</h2>
+    <div id="guideArea"></div>
+  </section>
+
+  <!-- 環境 -->
+  <section id="v-meta" data-view hidden>
+    <h2>今の環境</h2>
+    <div id="metaStatus"></div>
+    <button class="btn primary" id="metaRefresh" type="button">最新の環境を調べる</button>
+    <div class="panel md" id="metaNotes"></div>
+    <button class="link" id="metaEditToggle" type="button">環境メモを編集する</button>
+    <div id="metaEdit" hidden>
+      <textarea id="metaEditText" rows="10"></textarea>
+      <button class="btn" id="metaEditSave" type="button">メモを保存</button>
+    </div>
+    <h2>環境を踏まえたアドバイス</h2>
+    <div id="adviceArea"></div>
+  </section>
+
+  <!-- 設定 -->
+  <section id="v-settings" data-view hidden>
+    <h2>AI</h2>
+    <label class="f" for="setKey">Gemini APIキー</label>
+    <input type="password" id="setKey" autocomplete="off" placeholder="AQ. または AIza で始まるキー">
+    <p class="hint">キーはこのiPhoneの中だけに保存され、Googleへの問い合わせ以外には使われません。</p>
+    <label class="f" for="setModel">AIモデル</label>
+    <select id="setModel"></select>
+    <p class="hint">混雑や上限エラーのときは、自動で他のモデルに切り替えます。</p>
+    <h2>プレイヤー</h2>
+    <label class="f" for="setName">自分のプレイヤー名（ログの表記と同じに）</label>
+    <input type="text" id="setName" placeholder="S_Tobari" autocapitalize="off" autocomplete="off">
+    <h2>レギュレーション</h2>
+    <textarea id="setReg" rows="4"></textarea>
+    <button class="btn" id="setRegSave" type="button">レギュレーションを保存</button>
+    <h2>データ</h2>
+    <p class="hint" id="storageInfo">データはこのiPhoneの中に保存されます。機種変更に備えて、ときどきバックアップを書き出してください。</p>
+    <div class="row2"><button class="btn" id="exportBtn" type="button">バックアップを書き出す</button><button class="btn" id="importBtn" type="button">バックアップを読み込む</button></div>
+    <input type="file" id="importFile" accept="application/json,.json" hidden>
+    <p class="hint" style="margin-top:18px">PTCGL 検討 v1.0</p>
+  </section>
+</main>
+
+<nav class="tabs" aria-label="画面の切り替え">
+  <button type="button" data-tab="review" aria-current="page"><svg viewBox="0 0 24 24"><path d="M3 17l5-6 4 3 5-7 4 4"/><path d="M3 21h18"/></svg>検討</button>
+  <button type="button" data-tab="history"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>履歴</button>
+  <button type="button" data-tab="decks"><svg viewBox="0 0 24 24"><rect x="5" y="3.5" width="12" height="16" rx="2"/><path d="M8.5 21h9a2 2 0 0 0 2-2V7"/></svg>デッキ</button>
+  <button type="button" data-tab="meta"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 2.5 14.4 0 17M12 3.5c-2.5 2.6-2.5 14.4 0 17"/></svg>環境</button>
+  <button type="button" data-tab="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/></svg>設定</button>
+</nav>
+<div class="toast" id="toast" hidden></div>
+
+<script src="core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
