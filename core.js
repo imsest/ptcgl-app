@@ -389,12 +389,20 @@ ${log}
   }
   const ERR = {
     busy: "Geminiのサーバーが混み合っています（Google側の一時的な混雑）。数分おいてから、もう一度試してください。",
-    quota: "無料枠の利用上限に達しました。1分ほど待つか、明日もう一度試してください。",
+    quota: "無料枠の利用上限に達しました。1分ほど待ってから、もう一度試してください。",
+    quota_day: "今日の無料枠を使い切りました。日本時間の16時ごろ（Googleの日付の切り替わり）にリセットされます。",
     model: "選んだモデルが見つかりませんでした。設定でモデルを変更してください。",
     auth: "APIキーが使えませんでした。設定でAPIキーを確認してください。",
     network: "通信できませんでした。電波の良いところで、もう一度試してください。",
   };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // 429 の中身から「1日の上限」か「1分の上限」か、何秒待てばよいかを読み取る
+  function quotaInfo(e) {
+    const s = String(e.message || "") + " " + String(e.details || "");
+    const daily = /PerDay|per day|daily/i.test(s);
+    const m = s.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/) || s.match(/retry in (\d+(?:\.\d+)?)\s*s/i);
+    return { daily, wait: m ? Math.ceil(parseFloat(m[1])) : null };
+  }
 
   function buildBody({ system, prompt, schema, search, temperature }) {
     const body = {
@@ -421,8 +429,11 @@ ${log}
     const url = API + encodeURIComponent(model) + (stream ? ":streamGenerateContent?alt=sse" : ":generateContent");
     const res = await fetchFn(url, { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey }, body: JSON.stringify(body) });
     if (!res.ok) {
-      let msg = ""; try { const j = await res.json(); msg = (j.error && (j.error.status + " " + j.error.message)) || ""; } catch (_) { /* 本文なし */ }
-      throw new HttpError(res.status, msg || "HTTP " + res.status);
+      let msg = "", details = "";
+      try { const j = await res.json(); msg = (j.error && (j.error.status + " " + j.error.message)) || ""; details = JSON.stringify((j.error && j.error.details) || []); } catch (_) { /* 本文なし */ }
+      const err = new HttpError(res.status, msg || "HTTP " + res.status);
+      err.details = details;
+      throw err;
     }
     const sources = [];
     if (!stream) { const j = await res.json(); collectSources(j, sources); return { text: textOf(j), sources }; }
@@ -462,7 +473,17 @@ ${log}
           const r = await callOnce(fetchFn, { apiKey: opts.apiKey, model: m, body, stream: !!opts.stream, onText: opts.onText });
           return { ...r, model: m, searched: !!opts.search && r.sources.length > 0, at: nowStamp() };
         } catch (e) {
-          const kind = classify(e); lastKind = kind; lastMsg = e.message;
+          let kind = classify(e); lastMsg = e.message;
+          if (kind === "quota") {
+            const q = quotaInfo(e);
+            if (q.daily) kind = "quota_day";
+            // 1分あたりの上限で、待ち時間が短ければ、待ってから同じモデルでやり直す
+            else if (attempt === 0 && q.wait !== null && q.wait <= 60) {
+              for (let s = q.wait; s > 0; s -= 5) { opts.onNote && opts.onNote(`1分あたりの上限に達したため、${s}秒待ってから再開します…`); await sleep(Math.min(5, s) * 1000); }
+              continue;
+            }
+          }
+          lastKind = kind;
           if (kind === "auth" || kind === "network" || kind === "other") throw new AIError(ERR[kind] || ("AIの呼び出しに失敗しました：" + String(e.message).slice(0, 200)));
           if (kind === "busy" && attempt === 0) { opts.onNote && opts.onNote(`${m} が混雑中。数秒待って再試行しています…`); await sleep(3000); continue; }
           break;

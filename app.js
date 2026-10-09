@@ -116,8 +116,17 @@
   let metaJob = null;
   const metaFresh = (days) => { const a = Core.metaAgeDays(store); return a !== null && a <= days; };
 
-  function refreshMeta(onNote) {
+  const AUTO_RETRY_HOURS = 6;
+  function autoMetaAllowed() {
+    const t = store.meta_last_try ? new Date(store.meta_last_try).getTime() : 0;
+    return Date.now() - t > AUTO_RETRY_HOURS * 3600 * 1000;
+  }
+  function refreshMeta(onNote, { manual = false } = {}) {
     if (metaJob) return metaJob;
+    if (!manual && !autoMetaAllowed()) {
+      return Promise.resolve({ ok: false, detail: "少し前に環境の検索に失敗したため、保存済みの環境メモを使います（時間をおいて自動で再挑戦します）" });
+    }
+    store.meta_last_try = new Date().toISOString(); save();
     metaJob = (async () => {
       setTop("環境を更新中…", true);
       try {
@@ -480,7 +489,7 @@
   $("metaRefresh").addEventListener("click", async (ev) => {
     if (needKey()) return;
     const btn = ev.currentTarget; btn.disabled = true; btn.textContent = "検索しています…";
-    const r = await refreshMeta((n) => { btn.textContent = n; });
+    const r = await refreshMeta((n) => { btn.textContent = n; }, { manual: true });
     btn.disabled = false; btn.textContent = "最新の環境を調べる";
     toast(r.ok ? "環境メモを更新しました" : r.detail); renderMeta();
   });
