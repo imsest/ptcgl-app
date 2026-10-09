@@ -465,6 +465,7 @@ ${log}
     const body = buildBody(opts);
     const models = [opts.model].concat(FALLBACK.filter((m) => m !== opts.model));
     let lastKind = "other", lastMsg = "";
+    const tried = [];
     for (let i = 0; i < models.length; i++) {
       const m = models[i];
       for (let attempt = 0; attempt < 2; attempt++) {
@@ -473,7 +474,7 @@ ${log}
           const r = await callOnce(fetchFn, { apiKey: opts.apiKey, model: m, body, stream: !!opts.stream, onText: opts.onText });
           return { ...r, model: m, searched: !!opts.search && r.sources.length > 0, at: nowStamp() };
         } catch (e) {
-          let kind = classify(e); lastMsg = e.message;
+          let kind = classify(e); lastMsg = `${m}：${e.message}`; tried.push(`${m}=${e.status || "?"}`);
           if (kind === "quota") {
             const q = quotaInfo(e);
             if (q.daily) kind = "quota_day";
@@ -484,14 +485,14 @@ ${log}
             }
           }
           lastKind = kind;
-          if (kind === "auth" || kind === "network" || kind === "other") throw new AIError(ERR[kind] || ("AIの呼び出しに失敗しました：" + String(e.message).slice(0, 200)));
+          if (kind === "auth" || kind === "network" || kind === "other") throw new AIError((ERR[kind] || "AIの呼び出しに失敗しました。") + `\n（${m}／Googleからの返答：${String(e.message).slice(0, 300)}）`);
           if (kind === "busy" && attempt === 0) { opts.onNote && opts.onNote(`${m} が混雑中。数秒待って再試行しています…`); await sleep(3000); continue; }
           break;
         }
       }
       if (i + 1 < models.length) opts.onNote && opts.onNote(`${m} が使えないため ${models[i + 1]} に切り替えます…`);
     }
-    throw new AIError(ERR[lastKind] || ("AIの呼び出しに失敗しました：" + lastMsg.slice(0, 200)));
+    throw new AIError((ERR[lastKind] || "AIの呼び出しに失敗しました。") + `\n（試したモデル：${tried.join("、")}／最後のGoogleからの返答：${lastMsg.slice(0, 300)}）`);
   }
 
   function parseJSON(text) {
