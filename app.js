@@ -472,7 +472,8 @@
     const name = $("deckName").value.trim(), text = $("deckText").value.trim();
     if (!name || !text) { toast("デッキ名とデッキリストを入力してください"); return; }
     if (deckSel && deckSel !== name) { delete store.decks[deckSel]; }
-    store.decks[name] = text; deckSel = name; await save(); renderDecks(); renderDeckSelect($("logDeck"), true); toast(`「${name}」を保存しました`);
+    store.decks[name] = text; deckSel = ""; await save(); renderDecks(); renderDeckSelect($("logDeck"), true);
+    toast(`「${name}」を登録しました`); window.scrollTo(0, 0);
   });
   $("deckDelete").addEventListener("click", async (ev) => {
     const btn = ev.currentTarget;
@@ -488,7 +489,8 @@
     const el = $("strategyArea"), names = Object.keys(store.decks);
     if (!names.length) { el.innerHTML = `<div class="empty">「デッキ登録」でデッキを登録すると、デッキ別の戦い方・展開と、環境を踏まえたアドバイスを出せます。</div>`; return; }
     if (!names.includes(strategyDeck)) strategyDeck = names.includes(store.settings.last_deck) ? store.settings.last_deck : names[0];
-    el.innerHTML = `<div class="chips">${names.map((n) => `<button class="chip" type="button" data-sdeck="${E(n)}" aria-pressed="${n === strategyDeck}">${E(n)}</button>`).join("")}</div>
+    el.innerHTML = `<label class="f" for="sDeck" style="margin-top:0">デッキ</label>
+      <select id="sDeck">${names.map((n) => `<option ${n === strategyDeck ? "selected" : ""}>${E(n)}</option>`).join("")}</select>
       <h2>戦い方・展開</h2>
       <label class="f" for="gFocus">特に知りたいこと（任意）</label><input type="text" id="gFocus" placeholder="後攻1ターン目の動き、ドラパルト対面 など">
       <button class="btn primary" type="button" data-go="guides">戦い方・展開を解説してもらう</button>
@@ -498,9 +500,10 @@
       <button class="btn primary" type="button" data-go="meta_advice">アドバイスをもらう</button>
       <p class="hint" id="meta_adviceNote"></p><div id="meta_adviceOut">${answerHTML((store.meta_advice || {})[strategyDeck])}</div>`;
   }
+  $("strategyArea").addEventListener("change", (ev) => {
+    if (ev.target.id === "sDeck") { strategyDeck = ev.target.value; renderStrategy(); }
+  });
   $("strategyArea").addEventListener("click", async (ev) => {
-    const chip = ev.target.closest("[data-sdeck]");
-    if (chip) { strategyDeck = chip.dataset.sdeck; renderStrategy(); return; }
     const btn = ev.target.closest("[data-go]"); if (!btn) return;
     if (needKey()) return;
     const kind = btn.dataset.go, deckName = strategyDeck, deck = store.decks[deckName];
