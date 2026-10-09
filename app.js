@@ -558,7 +558,15 @@
     await load();
     renderAll();
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (_) { /* 任意 */ }
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+    if ("serviceWorker" in navigator) {
+      // 新しい版が公開されていたら、すぐ切り替えて1回だけ読み込み直す
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => { if (!reloaded) { reloaded = true; location.reload(); } });
+      navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((reg) => reg.update()).catch(() => {});
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") navigator.serviceWorker.getRegistration().then((r) => r && r.update()).catch(() => {});
+      });
+    }
     if (!key()) { show("settings"); toast("最初に Gemini APIキーを入力してください"); }
     // 環境メモが1日以上前なら、ログを貼っている間に裏で更新しておく（Limitless の集計はAIの無料枠を使わない）
     if (!metaFresh(1)) refreshMeta();
