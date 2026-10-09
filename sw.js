@@ -1,7 +1,7 @@
 /* オフラインでもアプリの画面が開けるようにする仕組み。
    アプリのファイルは「まずネットから最新を取り、だめなら保存しておいたもの」を使う。
    Gemini など外部への問い合わせには手を出さない。 */
-const CACHE = "ptcgl-v1";
+const CACHE = "ptcgl-v2";
 const FILES = ["./", "index.html", "app.js", "core.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png"];
 

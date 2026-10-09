@@ -123,22 +123,32 @@
   }
   function refreshMeta(onNote, { manual = false } = {}) {
     if (metaJob) return metaJob;
-    if (!manual && !autoMetaAllowed()) {
-      return Promise.resolve({ ok: false, detail: "少し前に環境の検索に失敗したため、保存済みの環境メモを使います（時間をおいて自動で再挑戦します）" });
-    }
-    store.meta_last_try = new Date().toISOString(); save();
     metaJob = (async () => {
       setTop("環境を更新中…", true);
       try {
+        // ① まず Limitless の大会結果を直接集計（AIの無料枠を使わない・最新）
+        try {
+          const r = await Core.limitlessMeta(window.fetch.bind(window), { onNote });
+          store.meta_notes = r.text; store.meta_updated_at = r.at.slice(0, 10); store.meta_sources = r.sources; store.meta_source = "limitless";
+          await save(); renderMeta();
+          return { ok: true, detail: `Limitless の大会結果から環境メモを更新しました（${r.sources.length}大会）` };
+        } catch (e) {
+          onNote && onNote(`Limitless から取得できませんでした（${e.message}）。AIの検索に切り替えます…`);
+        }
+        // ② だめなときだけ、AIのGoogle検索で調べる
+        if (!key()) return { ok: false, detail: "環境を更新できなかったため、保存済みの環境メモを使います" };
+        // AIの検索は無料枠を使うので、自動のときは失敗後6時間あける
+        if (!manual && !autoMetaAllowed()) return { ok: false, detail: "少し前にAIの検索に失敗したため、保存済みの環境メモを使います" };
+        store.meta_last_try = new Date().toISOString(); save();
         const r = await Core.ask({ apiKey: key(), model: model(), system: sys(), prompt: Core.metaResearchPrompt(store.regulation), search: true, onNote });
         if (r.searched && r.text) {
-          store.meta_notes = r.text; store.meta_updated_at = r.at.slice(0, 10); store.meta_sources = r.sources;
+          store.meta_notes = r.text; store.meta_updated_at = r.at.slice(0, 10); store.meta_sources = r.sources; store.meta_source = "ai";
           await save(); renderMeta();
           return { ok: true, detail: `環境メモを更新しました（参照 ${r.sources.length} ページ）` };
         }
         return { ok: false, detail: "検索結果を得られなかったため、保存済みの環境メモを使います" };
       } catch (e) {
-        return { ok: false, detail: `環境の検索に失敗したため、保存済みの環境メモを使います（${e.message}）` };
+        return { ok: false, detail: `環境の更新に失敗したため、保存済みの環境メモを使います（${e.message}）` };
       } finally { metaJob = null; setTop(); }
     })();
     return metaJob;
@@ -481,6 +491,7 @@
     const src = store.meta_sources || [];
     $("metaStatus").innerHTML = `<div class="notice ${age === null || age > 7 ? "warn" : ""}"><b>最終更新：${E(store.meta_updated_at || "未設定")}${age !== null ? `（${age}日前）` : ""}</b><br>
       ${age === null || age > 7 ? "古くなっています。検討やアドバイスの前に自動で更新されます。" : "検討・アドバイスは、この環境メモを前提に行います。"}
+      ${store.meta_source === "limitless" ? "<br>出典：Limitless Play の大会結果（アプリが直接集計）" : ""}
       ${src.length ? `<details class="sources"><summary>参照したページ（${src.length}）</summary><ul class="plain">${src.slice(0, 8).map((s) => `<li><a href="${E(s.url)}" target="_blank" rel="noopener">${E(s.title)}</a></li>`).join("")}</ul></details>` : ""}</div>`;
     $("metaNotes").innerHTML = md(store.meta_notes);
     $("metaEditText").value = store.meta_notes;
@@ -507,7 +518,7 @@
   }
   const bindSetting = (id, keyName) => $(id).addEventListener("change", async () => {
     store.settings[keyName] = $(id).value.trim(); await save(); toast("保存しました");
-    if (keyName === "api_key" && key() && !metaFresh(3)) refreshMeta();
+    if (keyName === "api_key" && key() && !metaFresh(1)) refreshMeta();
   });
   bindSetting("setKey", "api_key"); bindSetting("setModel", "model"); bindSetting("setName", "player_name");
   $("setRegSave").addEventListener("click", async () => { store.regulation = $("setReg").value.trim() || Core.DEFAULT_REGULATION; await save(); toast("保存しました"); });
@@ -548,8 +559,8 @@
     renderAll();
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (_) { /* 任意 */ }
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
-    if (!key()) { show("settings"); toast("最初に Gemini APIキーを入力してください"); return; }
-    // 環境メモが3日以上前なら、ログを貼っている間に裏で更新しておく（検討の待ち時間を減らす）
-    if (!metaFresh(3)) refreshMeta();
+    if (!key()) { show("settings"); toast("最初に Gemini APIキーを入力してください"); }
+    // 環境メモが1日以上前なら、ログを貼っている間に裏で更新しておく（Limitless の集計はAIの無料枠を使わない）
+    if (!metaFresh(1)) refreshMeta();
   })();
 })();

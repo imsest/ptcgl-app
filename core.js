@@ -370,6 +370,73 @@ ${log}
 ### 同じような局面で使える原則`;
   }
 
+
+  // ------------------------------------------------------------------ 環境：Limitless Play の大会結果を直接集計（AIを使わない）
+  const LIMITLESS = "https://play.limitlesstcg.com/api";
+  const JA_WORDS = {
+    dragapult: "ドラパルト", alakazam: "フーディン", dudunsparce: "ノココッチ", dusknoir: "ヨノワール", slowking: "ヤドキング",
+    excadrill: "ドリュウズ", greninja: "ゲッコウガ", gardevoir: "サーナイト", ogerpon: "オーガポン", meganium: "メガニウム",
+    hydrapple: "カミツオロチ", grimmsnarl: "オーロンゲ", froslass: "ユキメノコ", zoroark: "ゾロアーク", blaziken: "バシャーモ",
+    dhelmise: "ダダリン", kangaskhan: "ガルーラ", sharpedo: "サメハダー", munkidori: "マシマシラ", pecharunt: "モモワロウ",
+    charizard: "リザードン", pidgeot: "ピジョット", gholdengo: "サーフゴー", raging: "タケルライコ", bolt: "", joltik: "バチュル",
+    terapagos: "テラパゴス", archaludon: "ブリジュラス", lucario: "ルカリオ", absol: "アブソル", gengar: "ゲンガー", mega: "メガ",
+    basic: "たね", box: "ボックス", tera: "テラス", lugia: "ルギア", miraidon: "ミライドン", iron: "テツノ", crustle: "イワパレス",
+    flareon: "ブースター", noctowl: "ヨルノズク", ceruledge: "ソウブレイズ", hops: "ホップの", ethan: "ヒビキの", cynthia: "シロナの",
+    marnie: "マリィの", lillie: "リーリエの", n: "Nの", team: "", rocket: "ロケット団", rockets: "ロケット団の", festival: "フェスティバル",
+  };
+  function jaDeckName(en) {
+    const parts = String(en).toLowerCase().replace(/['’]s\b/g, "s").split(/[\s/-]+/).filter(Boolean);
+    if (!parts.length || !parts.every((p) => p in JA_WORDS)) return "";
+    return parts.map((p) => JA_WORDS[p]).filter(Boolean).join("・").replace(/メガ・/g, "メガ");
+  }
+
+  // 直近 days 日のスタンダード大会のうち参加者の多い順に maxEvents 件を集計する
+  async function limitlessMeta(fetchFn, { days = 14, maxEvents = 8, minPlayers = 32, onNote } = {}) {
+    const getJSON = async (path) => {
+      const r = await fetchFn(LIMITLESS + path);
+      if (!r.ok) throw new Error("Limitless " + r.status);
+      return r.json();
+    };
+    onNote && onNote("Limitless から最近の大会一覧を取得しています…");
+    const list = await getJSON("/tournaments?game=PTCG&limit=100");
+    const since = Date.now() - days * 86400000;
+    const events = (Array.isArray(list) ? list : [])
+      .filter((t) => String(t.format).toUpperCase() === "STANDARD" && (t.players || 0) >= minPlayers && new Date(t.date).getTime() >= since)
+      .sort((a, b) => b.players - a.players).slice(0, maxEvents);
+    if (!events.length) throw new Error("直近の大会が見つかりませんでした");
+    const decks = new Map(); let players = 0;
+    for (let i = 0; i < events.length; i++) {
+      onNote && onNote(`大会結果を集計しています（${i + 1} / ${events.length}）…`);
+      let st; try { st = await getJSON(`/tournaments/${events[i].id}/standings`); } catch (_) { continue; }
+      for (const p of Array.isArray(st) ? st : []) {
+        if (!p.deck || !p.deck.name) continue;
+        const rec = p.record || {}; players++;
+        const d = decks.get(p.deck.name) || { name: p.deck.name, count: 0, w: 0, l: 0, t: 0, strong: 0 };
+        d.count++; d.w += rec.wins || 0; d.l += rec.losses || 0; d.t += rec.ties || 0;
+        if ((rec.wins || 0) >= 5 && (rec.wins || 0) > 2 * (rec.losses || 0)) d.strong++; // 好成績（5勝以上で負けの倍以上勝った）
+        decks.set(p.deck.name, d);
+      }
+    }
+    if (!players) throw new Error("大会結果を読み取れませんでした");
+    const rows = [...decks.values()].filter((d) => !/^other$/i.test(d.name)).sort((a, b) => b.count - a.count);
+    const pct = (x) => Math.round(x * 1000) / 10;
+    const lines = [
+      `調査日：${todayJa()}（Limitless Play の直近${days}日・スタンダード ${events.length}大会・デッキ判明 ${players}人を集計）`, "",
+      "### 使用率の高いデッキ",
+      ...rows.slice(0, 12).map((d, i) => {
+        const games = d.w + d.l + d.t, ja = jaDeckName(d.name);
+        return `${i + 1}. ${d.name}${ja ? `（${ja}）` : ""} — 使用率 ${pct(d.count / players)}%・勝率 ${games ? Math.round(d.w / games * 100) : "-"}%・好成績 ${d.strong}人`;
+      }),
+      "", "### 集計した大会",
+      ...events.map((t) => `- ${t.name}（${String(t.date).slice(0, 10)}・${t.players}人）`),
+      "", "※勝率は全試合の勝ち÷試合数。好成績は5勝以上かつ負けの2倍以上勝ったプレイヤー数。オンライン大会の集計なので、公式大会とは傾向が違うことがあります。",
+    ];
+    return {
+      text: lines.join("\n"), searched: true, model: "Limitless集計", at: nowStamp(),
+      sources: events.map((t) => ({ title: `${t.name}（${t.players}人）`, url: `https://play.limitlesstcg.com/tournament/${t.id}/standings` })),
+    };
+  }
+
   // ------------------------------------------------------------------ Gemini 呼び出し
   const MODELS = ["gemini-flash-latest", "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"];
   const FALLBACK = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-flash-latest"];
@@ -506,7 +573,7 @@ ${log}
   const Core = {
     EVAL_LABELS, evalLabel, clamp, DEFAULT_REGULATION, DEFAULT_META_NOTES, MODELS, defaultStore, metaAgeDays, nowStamp,
     parseDeck, parseLog, compactLines, formatLogForAI, extractFacts, factsDigest, fallbackAnalysis, mergeWithFacts,
-    detectSwings, baselineScore, systemPrompt, analysisPrompt, ANALYSIS_SCHEMA, metaResearchPrompt, deckGuidePrompt,
+    detectSwings, baselineScore, limitlessMeta, jaDeckName, systemPrompt, analysisPrompt, ANALYSIS_SCHEMA, metaResearchPrompt, deckGuidePrompt,
     metaAdvicePrompt, deepDivePrompt, ask, parseJSON, AIError,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = Core; else root.Core = Core;
