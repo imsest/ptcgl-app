@@ -129,6 +129,61 @@
   const RE_FIRST = /^(\S+) decided to go (first|second)/i;
   const RE_WIN = /(\S+) wins\./i;
 
+  // デッキリストの1行「4 Carvanha PAF 7」から、カード名「Carvanha」だけを取り出す
+  const cardName = (s) => String(s).replace(/\s+[A-Z][A-Z0-9-]{1,5}\s+\d+[a-z]?$/i, "").replace(/\s*\{.\}\s*/g, " ").trim().toLowerCase();
+
+  // そのプレイヤーがログ上で出したカード（場に出す・進化・ワザ/特性を使ったポケモン）
+  function cardsUsedBy(parsed, name) {
+    const out = new Set();
+    const lines = parsed.setup.concat(...parsed.turns.map((t) => t.lines));
+    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const reOwn = new RegExp(`^-?\\s*${esc}(?:'s|’s) (.+?) used `, "i");
+    for (const raw of lines) {
+      const l = raw.replace(/^-\s*/, "");
+      let m;
+      if (l.startsWith(name + " ")) {
+        if ((m = l.match(RE_PLAYED))) out.add(m[2].toLowerCase());
+        else if ((m = l.match(RE_EVOLVED))) { out.add(m[2].toLowerCase()); out.add(m[3].toLowerCase()); }
+        else if ((m = l.match(/ attached (.+?) to /i))) out.add(m[1].toLowerCase());
+      }
+      if ((m = l.match(reOwn))) out.add(m[1].toLowerCase());
+    }
+    return out;
+  }
+
+  // どちらがユーザー（＝このログの持ち主）かを決める。
+  // ① ログの視点：ログの持ち主だけ「〇〇 drew Judge.」のように引いたカード名が見える（相手は "drew a card"）
+  // ② 設定のプレイヤー名 ③ 選んだデッキのカードを実際に使っている側
+  function identifyMe(parsed, { playerName = "", deckText = "" } = {}) {
+    const players = parsed.players;
+    if (!players.length) return { me: playerName || "自分", how: "不明", deckMatch: null };
+    const named = Object.fromEntries(players.map((p) => [p, 0]));
+    const lines = parsed.setup.concat(...parsed.turns.map((t) => t.lines));
+    for (const raw of lines) {
+      const m = raw.replace(/^-\s*/, "").match(/^(\S+) drew (.+?)\.$/i);
+      if (m && m[1] in named && !/^(a card|\d+ cards?|a prize card)$/i.test(m[2])) named[m[1]]++;
+    }
+    // 開始時の手札の公開（「drew 7 cards for the opening hand」の直後の「• カード名」）も視点の証拠
+    for (let i = 0; i < parsed.setup.length - 2; i++) {
+      const m = parsed.setup[i].match(/^(\S+) drew 7 cards for the opening hand/i);
+      if (m && m[1] in named && /^•/.test(parsed.setup[i + 2] || "")) named[m[1]] += 3;
+    }
+    // デッキの一致度
+    let deckMatch = null;
+    const deckCards = new Set(Object.values(parseDeck(deckText)).filter(Array.isArray).flat().map((c) => cardName(c.name)));
+    if (deckCards.size) {
+      deckMatch = Object.fromEntries(players.map((p) => [p, [...cardsUsedBy(parsed, p)].filter((n) => deckCards.has(n)).length]));
+    }
+    const ranked = players.slice().sort((a, b) => named[b] - named[a]);
+    if (named[ranked[0]] > 0 && named[ranked[0]] > (named[ranked[1]] || 0)) return { me: ranked[0], how: "ログの視点", deckMatch };
+    if (players.includes(playerName)) return { me: playerName, how: "プレイヤー名", deckMatch };
+    if (deckMatch) {
+      const byDeck = players.slice().sort((a, b) => deckMatch[b] - deckMatch[a]);
+      if (deckMatch[byDeck[0]] > (deckMatch[byDeck[1]] || 0)) return { me: byDeck[0], how: "デッキの一致", deckMatch };
+    }
+    return { me: players[0], how: "推測", deckMatch };
+  }
+
   function baselineScore(myLeft, oppLeft) {
     const d = oppLeft - myLeft; // 相手の残りが多いほど自分が有利
     return d >= 3 ? 2 : d >= 1 ? 1 : d === 0 ? 0 : d >= -2 ? -1 : -2;
@@ -136,7 +191,7 @@
 
   function extractFacts(parsed, me) {
     const players = parsed.players;
-    if (!players.includes(me)) me = players[1] || players[0] || me || "自分";
+    if (!players.includes(me)) me = identifyMe(parsed).me;
     const opp = players.find((p) => p !== me) || "相手";
     let wentFirst = "不明", result = "不明";
     for (const l of parsed.setup) {
@@ -162,13 +217,16 @@
       info.baseline = baselineScore(info.my_left, info.opp_left);
       return info;
     });
-    return { me, opp, went_first: wentFirst, result, turns };
+    return { me, opp, went_first: wentFirst, result, turns,
+      my_cards: [...cardsUsedBy(parsed, me)].slice(0, 30), opp_cards: [...cardsUsedBy(parsed, opp)].slice(0, 30) };
   }
 
   function factsDigest(f) {
-    const out = [`自分＝${f.me}／相手＝${f.opp}／自分は${f.went_first}／結果：${f.result}`];
+    const out = [`自分（ユーザー）＝${f.me}／相手＝${f.opp}／自分は${f.went_first}／結果：自分の${f.result}`];
+    if (f.my_cards && f.my_cards.length) out.push(`自分（${f.me}）がこの試合で使ったカード：${f.my_cards.join("、")}`);
+    if (f.opp_cards && f.opp_cards.length) out.push(`相手（${f.opp}）がこの試合で使ったカード：${f.opp_cards.join("、")}`);
     for (const t of f.turns) {
-      out.push(`[ターン${t.turn}：${t.player}] 終了時のサイド残り 自分${t.my_left}枚・相手${t.opp_left}枚`);
+      out.push(`[ターン${t.turn}：${t.player}の番] 終了時のサイド残り 自分${t.my_left}枚・相手${t.opp_left}枚`);
       if (t.attacks.length) out.push("  ワザ：" + t.attacks.join("／"));
       if (t.kos.length) out.push("  きぜつ：" + t.kos.join("、"));
       if (t.evolved.length) out.push("  進化：" + t.evolved.join("、"));
@@ -185,9 +243,8 @@
         const bits = t.attacks.slice(0, 1).concat(t.kos.map((k) => `${k}がきぜつ`));
         return {
           turn: t.turn, player: t.player, score: t.baseline,
-          summary: bits.length ? bits.join("、") : (t.played.length || t.evolved.length ? "展開・準備" : "大きな動きなし"),
-          reason: `サイド残り 自分${t.my_left}枚・相手${t.opp_left}枚（サイド差による自動評価）`,
-          key_actions: t.evolved.concat(t.played).slice(0, 4), better_play: "",
+          situation: (bits.length ? bits.join("、") + "。" : "") + `サイド残り 自分${t.my_left}枚・相手${t.opp_left}枚（サイド差による自動評価）`,
+          advice: "",
         };
       }),
       swing_points: [], lessons: [],
@@ -206,7 +263,7 @@
         const row = { ...(byTurn.get(t.turn) || fb.get(t.turn)) };
         row.turn = t.turn; row.player = t.player;
         row.score = Number.isFinite(Number(row.score)) ? clamp(row.score) : t.baseline;
-        row.key_actions = row.key_actions || []; row.better_play = row.better_play || "";
+        row.situation = row.situation || row.reason || row.summary || ""; row.advice = row.advice || row.better_play || "";
         row.prizes_left = [t.my_left, t.opp_left];
         return row;
       });
@@ -247,18 +304,28 @@
 - 構築の変更案などでデッキ外のカードを勧めるときは、カード名の後ろに（収録弾・レギュレーションマーク）を必ず書き、H 以降と確認できないカードは勧めない。`;
   }
 
-  function analysisPrompt({ log, me, deck, meta, extra, digest }) {
+  function analysisPrompt({ log, me, opp, deckName, deck, meta, extra, digest }) {
     return [
-      `次の順番で、1ターンずつ検討してください。各ターンのJSONも、この順番どおりの項目で書きます。
-(1) そのターン終了時の盤面を再現する（my_active〜threats）：場のポケモン、受けたダメージ量、エネルギー、道具、手札の推定。
-    きぜつ・入れ替え・進化・回復・ダメカンの移動を反映する。分からない部分は推測と明記する。
-(2) 盤面をもとに評価する（reason → score）：サイド残りの差 → 盤面 → 手札 → 次の番にお互い何枚サイドを取れるか、の順で考える。
-    score は自分視点で +2優勢 / +1やや優勢 / 0互角 / -1やや劣勢 / -2劣勢。
-(3) 自分のターンなら、より良い手があったかを考える（better_play）。そのターン開始時の盤面と手札で本当に実行できたかを確認してから書く。
-全ターンを終えたら、形勢が +1以上 から -1以下 に落ちた、または2段階以上悪化した自分のターンを swing_points に必ず入れる。`,
-      `## プログラムで確認した事実（サイド枚数・きぜつ・ワザ。正確なので必ず前提にする）\n${digest || "（なし）"}`,
-      `## 自分のプレイヤー名\n${me || "（ログから推測）"}`,
-      `## 自分のデッキリスト\n${deck || "（未登録）"}`,
+      `あなたは、${me} 本人のコーチです。${me} が使ったデッキは「${deckName || "（未指定）"}」です。
+評価・助言はすべて ${me}（＝ユーザー＝自分）の視点で、${me} のプレイを良くすることを中心に行ってください。
+相手（${opp}）の戦略は、${me} がどう対応すべきだったかを考えるために必要な範囲で考慮します。
+相手のデッキ（opponent_deck_guess）は、相手（${opp}）が使ったカードから判断してください。自分のデッキ名を入れてはいけません。
+
+## 各ターンの書き方（ログに書いてある事実を言い直すだけの文章は書かない）
+頭の中で、そのターン終了時の盤面（場・ダメージ・エネルギー・手札の推定・サイド）を再現してから、次の順に書く。
+- situation：形勢を決めている要点を1文で（例「サイドは2-4でリードだが、ベンチの低HPが狙われる形」）
+- score：${me} 視点の形勢。+2優勢 / +1やや優勢 / 0互角 / -1やや劣勢 / -2劣勢
+- advice：示唆を1〜2文で具体的に（カード名と行動）。
+  ${me} の番 →「このとき〇〇をしておくべきだったかも／〇〇は良い判断」。実行できたかを盤面と手札で確かめてから書く。
+  相手の番 →「相手の〇〇に対して、次の番は〇〇を意識したい」。
+
+## 全ターンのあと
+- swing_points：勝敗を分けた ${me} の行動（形勢が大きく傾いたターン）。何をして、なぜ傾き、何をすべきだったか。
+  形勢が +1以上 から -1以下 に落ちた、または2段階以上悪化した ${me} のターンは必ず入れる。勝った試合なら勝因になった行動も入れてよい。
+- overall_summary：${me} が${"負けた場合は敗因、勝った場合は勝因"}を、ターン番号と行動を挙げて3〜4文で。
+  例「T6でベンチを3体に広げたことで、ドラパルトexに2枚取られる形になり形勢が逆転した。ネストボールを温存しベンチを1体に絞るべきだった。」`,
+      `## プログラムで確認した事実（サイド枚数・きぜつ・ワザ・使ったカード。正確なので必ず前提にする）\n${digest || "（なし）"}`,
+      `## ${me} のデッキリスト（${deckName || "名前なし"}）\n${deck || "（未登録）"}`,
       `## 現在の環境メモ（最新情報。記憶より優先する）\n${meta || "（なし）"}`,
       `## ユーザーからの補足（手札の状況など）\n${extra || "（なし）"}`,
       `## バトルログ\n${log}`,
@@ -269,31 +336,28 @@
   const S = (type, extra) => Object.assign({ type }, extra || {});
   const STR = S("STRING"), INT = S("INTEGER"), STRS = S("ARRAY", { items: STR });
   function obj(props, order) { return S("OBJECT", { properties: props, required: order, propertyOrdering: order }); }
-  const TURN_ORDER = ["turn", "player", "my_active", "my_bench", "opp_active", "opp_bench", "my_hand", "opp_hand",
-    "threats", "reason", "score", "summary", "key_actions", "better_play"];
+  const TURN_ORDER = ["turn", "player", "situation", "score", "advice"];
   const TURN_SCHEMA = obj({
     turn: INT, player: S("STRING", { description: "'自分' または '相手'" }),
-    my_active: S("STRING", { description: "自分のバトル場：ポケモン名（ダメージ量・エネルギー・道具）" }),
-    my_bench: STRS, opp_active: STR, opp_bench: STRS,
-    my_hand: S("STRING", { description: "自分の手札の推定" }), opp_hand: S("STRING", { description: "相手の手札の推定" }),
-    threats: S("STRING", { description: "次の番に起こりうること（お互い何枚サイドを取れるか）" }),
-    reason: S("STRING", { description: "評価の根拠" }), score: INT,
-    summary: S("STRING", { description: "そのターンに起きたことを1〜2文で" }),
-    key_actions: STRS, better_play: S("STRING", { description: "自分のターンでより良い手。なければ空文字" }),
+    situation: S("STRING", { description: "形勢を決めている要点を1文で" }), score: INT,
+    advice: S("STRING", { description: "示唆。自分の番＝すべきだった行動や良かった判断、相手の番＝次の番に意識すること" }),
   }, TURN_ORDER);
   const SWING_ORDER = ["turn", "what_happened", "better_play", "why", "alternative_line", "confidence"];
   const SWING_SCHEMA = obj({
-    turn: INT, what_happened: STR, better_play: S("STRING", { description: "打つべきだった手。カード名と順番を具体的に" }),
+    turn: INT, what_happened: S("STRING", { description: "自分が何をして、どう形勢が傾いたか" }),
+    better_play: S("STRING", { description: "すべきだった手。カード名と順番を具体的に" }),
     why: S("STRING", { description: "その手が良い理由。相手の返しも考慮" }), alternative_line: STRS,
     confidence: S("STRING", { description: "高 / 中 / 低" }),
   }, SWING_ORDER);
   const ANALYSIS_ORDER = ["my_name", "opponent_name", "opponent_deck_guess", "went_first", "result", "turns",
     "swing_points", "overall_summary", "lessons"];
   const ANALYSIS_SCHEMA = obj({
-    my_name: STR, opponent_name: STR, opponent_deck_guess: STR, went_first: STR, result: STR,
+    my_name: STR, opponent_name: STR,
+    opponent_deck_guess: S("STRING", { description: "相手が使ったデッキ（相手の使ったカードから判断。自分のデッキではない）" }),
+    went_first: STR, result: STR,
     turns: S("ARRAY", { items: TURN_SCHEMA }), swing_points: S("ARRAY", { items: SWING_SCHEMA }),
-    overall_summary: S("STRING", { description: "試合全体の流れの総評（3〜5文）" }),
-    lessons: S("ARRAY", { items: STR, description: "次の試合に活かせる教訓（3〜5個）" }),
+    overall_summary: S("STRING", { description: "勝因または敗因を、ターン番号と行動を挙げて3〜4文で" }),
+    lessons: S("ARRAY", { items: STR, description: "次の試合に活かせる教訓（3個）" }),
   }, ANALYSIS_ORDER);
 
   const BRIEF = "各見出しは3〜6行の箇条書きで、要点だけを短く書いてください。前置きや挨拶は不要です。";
@@ -573,7 +637,7 @@ ${log}
   const Core = {
     EVAL_LABELS, evalLabel, clamp, DEFAULT_REGULATION, DEFAULT_META_NOTES, MODELS, defaultStore, metaAgeDays, nowStamp,
     parseDeck, parseLog, compactLines, formatLogForAI, extractFacts, factsDigest, fallbackAnalysis, mergeWithFacts,
-    detectSwings, baselineScore, limitlessMeta, jaDeckName, systemPrompt, analysisPrompt, ANALYSIS_SCHEMA, metaResearchPrompt, deckGuidePrompt,
+    detectSwings, baselineScore, identifyMe, limitlessMeta, jaDeckName, systemPrompt, analysisPrompt, ANALYSIS_SCHEMA, metaResearchPrompt, deckGuidePrompt,
     metaAdvicePrompt, deepDivePrompt, ask, parseJSON, AIError,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = Core; else root.Core = Core;

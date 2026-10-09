@@ -1,7 +1,7 @@
 /* オフラインでもアプリの画面が開けるようにする仕組み。
    アプリのファイルは毎回サーバーに「新しい版があるか」を確認してから使い（更新がすぐ反映される）、
    電波がないときだけ保存しておいたものを使う。Gemini や Limitless への問い合わせには手を出さない。 */
-const CACHE = "ptcgl-v3";
+const CACHE = "ptcgl-v4";
 const FILES = ["./", "index.html", "app.js", "core.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png"];
 

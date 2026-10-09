@@ -167,13 +167,16 @@
     document.querySelectorAll(".tabs button").forEach((btn) => {
       if (btn.dataset.tab === tab) btn.setAttribute("aria-current", "page"); else btn.removeAttribute("aria-current");
     });
+    if (tab === "settings") $("gearBtn").setAttribute("aria-current", "page"); else $("gearBtn").removeAttribute("aria-current");
     if (tab === "history") renderHistory();
     if (tab === "decks") renderDecks();
+    if (tab === "strategy") renderStrategy();
     if (tab === "meta") renderMeta();
     if (tab === "settings") renderSettings();
     window.scrollTo(0, 0);
   }
   document.querySelectorAll(".tabs button").forEach((btn) => btn.addEventListener("click", () => show(btn.dataset.tab)));
+  $("gearBtn").addEventListener("click", () => show("settings"));
 
   // ================================================================ 検討：入力
   function renderDeckSelect(sel, withNone) {
@@ -182,18 +185,34 @@
     sel.innerHTML = (withNone ? `<option value="">指定しない</option>` : "") + names.map((n) => `<option>${E(n)}</option>`).join("");
     if (names.includes(cur)) sel.value = cur; else if (store.settings.last_deck && names.includes(store.settings.last_deck)) sel.value = store.settings.last_deck;
   }
+  // どちらが自分か：ログの視点 → プレイヤー名 → 選んだデッキの一致、の順で判定（手動で切り替えも可）
+  function detectMe(parsed) {
+    return Core.identifyMe(parsed, { playerName: store.settings.player_name, deckText: store.decks[$("logDeck").value] || "" });
+  }
   function updateLogInfo() {
     const raw = $("logText").value;
     $("analyzeBtn").disabled = !raw.trim();
-    if (!raw.trim()) { $("logInfo").textContent = ""; return; }
+    const meSel = $("logMe");
+    if (!raw.trim()) { $("logInfo").textContent = ""; $("meRow").hidden = true; meSel.dataset.manual = ""; return; }
     const p = Core.parseLog(raw);
-    if (!p.ok) { $("logInfo").textContent = "ターンの区切りを読み取れませんでしたが、このまま検討できます"; return; }
-    const f = Core.extractFacts(p, store.settings.player_name);
-    const last = f.turns[f.turns.length - 1];
-    let t = `${p.turns.length}ターン読み取り：あなた（${f.me}）は${f.went_first}・${f.result}・最終サイド残り 自分${last.my_left}枚／相手${last.opp_left}枚`;
-    if (store.settings.player_name && !p.players.includes(store.settings.player_name)) t += `。設定のプレイヤー名がログにないため、${f.me} を自分として扱います`;
+    if (!p.ok) { $("logInfo").textContent = "ターンの区切りを読み取れませんでしたが、このまま評価できます"; $("meRow").hidden = true; return; }
+    const id = detectMe(p);
+    const key2 = p.players.join("|");
+    if (meSel.dataset.players !== key2) {
+      meSel.innerHTML = p.players.map((n) => `<option>${E(n)}</option>`).join("");
+      meSel.dataset.players = key2; meSel.dataset.manual = "";
+    }
+    if (!meSel.dataset.manual) meSel.value = id.me;
+    $("meRow").hidden = false;
+    const me = meSel.value, f = Core.extractFacts(p, me), last = f.turns[f.turns.length - 1];
+    const how = meSel.dataset.manual ? "手動で選択" : { "ログの視点": "ログの視点から判定", "プレイヤー名": "設定のプレイヤー名から判定", "デッキの一致": "選んだデッキから判定", "推測": "推測" }[id.how];
+    let t = `${p.turns.length}ターン読み取り：自分＝${me}（${how}）・${f.went_first}・${f.result}・最終サイド残り 自分${last.my_left}枚／相手${last.opp_left}枚`;
+    const dm = id.deckMatch, opp = f.opp;
+    if (dm && dm[opp] > dm[me]) t += `\n⚠ 選んだデッキのカードは ${opp} 側に多く出ています。デッキか「自分」の選択を確認してください`;
     $("logInfo").textContent = t;
   }
+  $("logMe").addEventListener("change", () => { $("logMe").dataset.manual = "1"; updateLogInfo(); });
+  $("logDeck").addEventListener("change", updateLogInfo);
   $("logText").addEventListener("input", updateLogInfo);
   $("pasteBtn").addEventListener("click", async () => {
     try { $("logText").value = await navigator.clipboard.readText(); updateLogInfo(); }
@@ -202,7 +221,7 @@
   $("analyzeBtn").addEventListener("click", runPipeline);
 
   // ================================================================ 検討：決めた順番で実行する
-  const STEPS = ["ログの読み取り", "事実の抜き出し（サイド・きぜつ・ワザ）", "環境の確認", "盤面の再現と形勢の評価", "事実との照合と保存"];
+  const STEPS = ["ログの読み取り", "自分と相手の判定、事実の抜き出し", "環境の確認", "形勢の評価と示唆", "事実との照合と保存"];
   function setStep(i, state, detail) {
     const li = $("steps").children[i]; if (!li) return;
     li.className = state;
@@ -226,10 +245,11 @@
 
     // ② 事実の抜き出し
     setStep(1, "active");
-    const facts = Core.extractFacts(parsed, store.settings.player_name);
+    const me = $("logMe").value || detectMe(parsed).me;
+    const facts = Core.extractFacts(parsed, me);
     const digest = Core.factsDigest(facts);
     const last = facts.turns[facts.turns.length - 1];
-    setStep(1, "done", last ? `${facts.went_first}・${facts.result}・最終サイド残り 自分${last.my_left}枚／相手${last.opp_left}枚` : "");
+    setStep(1, "done", last ? `自分＝${facts.me}（${deckName || "デッキ未指定"}）・相手＝${facts.opp}\n${facts.went_first}・${facts.result}・最終サイド残り 自分${last.my_left}枚／相手${last.opp_left}枚` : "");
 
     // ③ 環境の確認（古ければ先に検索して更新）
     setStep(2, "active", "確認しています…");
@@ -239,7 +259,7 @@
     // ④ 盤面の再現と形勢の評価（1回の呼び出しで、ターンごとに「盤面 → 評価 → 最善手」の順に書かせる）
     const N = facts.turns.length;
     setStep(3, "active", "考えています…");
-    const prompt = Core.analysisPrompt({ log: Core.formatLogForAI(parsed, raw), me: facts.me, deck: deckText, meta: store.meta_notes, extra, digest });
+    const prompt = Core.analysisPrompt({ log: Core.formatLogForAI(parsed, raw), me: facts.me, opp: facts.opp, deckName, deck: deckText, meta: store.meta_notes, extra, digest });
     let analysis = null, used = "", failure = "";
     for (let attempt = 0; attempt < 2 && !analysis; attempt++) {
       try {
@@ -247,9 +267,9 @@
           apiKey: key(), model: model(), system: sys(), prompt, schema: Core.ANALYSIS_SCHEMA, stream: true, temperature: 0.3,
           onNote: (n) => setStep(3, "active", n),
           onText: (_, all) => {
-            if (all.includes('"swing_points"')) { setStep(3, "active", "全ターンの評価が終わりました。転換点と最善手をまとめています…"); return; }
-            const k = (all.match(/"my_active"/g) || []).length;
-            if (k) setStep(3, "active", `${N ? Math.min(k, N) + " / " + N : k} ターン目の盤面を再現し、評価しています…`);
+            if (all.includes('"swing_points"')) { setStep(3, "active", "全ターンの評価が終わりました。勝敗を分けたポイントをまとめています…"); return; }
+            const k = (all.match(/"situation"/g) || []).length;
+            if (k) setStep(3, "active", `${N ? Math.min(k, N) + " / " + N : k} ターン目を評価しています…`);
           },
         });
         const a = Core.parseJSON(r.text);
@@ -276,6 +296,7 @@
     await save();
     setStep(4, "done", `保存しました（${Math.round((Date.now() - started) / 1000)}秒）`);
     $("logText").value = ""; $("logExtra").value = ""; updateLogInfo();
+    resultFrom = "review";
     setTimeout(() => { $("progress").hidden = true; renderResult(rec); }, 600);
   }
 
@@ -318,14 +339,7 @@
       <g font-size="12" fill="${COL.muted}" font-family="Barlow Condensed, sans-serif">${xl}</g></svg>`;
   }
 
-  function boardHTML(t) {
-    if (!t.my_active && !t.opp_active) return "";
-    const bench = (a) => (Array.isArray(a) && a.length ? a.map(E).join("、") : "なし");
-    return `<div class="board"><div><span>自分の場</span>　${E(t.my_active)}　<span>ベンチ</span> ${bench(t.my_bench)}</div>
-      <div><span>相手の場</span>　${E(t.opp_active)}　<span>ベンチ</span> ${bench(t.opp_bench)}</div>
-      ${t.my_hand ? `<div><span>手札（推定）</span> 自分 ${E(t.my_hand)}／相手 ${E(t.opp_hand)}</div>` : ""}
-      ${t.threats ? `<div><span>次の番</span> ${E(t.threats)}</div>` : ""}</div>`;
-  }
+  let resultFrom = "review"; // 結果を閉じたときに戻る画面
 
   function renderResult(rec) {
     const el = $("result");
@@ -335,59 +349,69 @@
     const aiSw = new Map((a.swing_points || []).map((s) => [Number(s.turn), s]));
     const swings = new Set([...aiSw.keys(), ...Core.detectSwings(turns)]);
     const rc = a.result === "勝ち" ? COL.me : a.result === "負け" ? COL.opp : COL.muted;
-    let h = `<button class="link" data-act="new" type="button">＋ 別の対局を検討する</button>
+    const why = a.result === "負け" ? "敗因" : a.result === "勝ち" ? "勝因" : "総評";
+    let h = `<div class="resbar"><button class="link" data-act="close" type="button">← 閉じる</button>
+        <button class="link" data-act="new" type="button">＋ 別のバトルを評価</button></div>
       <div class="verdict"><div class="top2"><div class="result" style="color:${rc}">${E(a.result || "不明")}</div>
-      <div class="facts"><span>相手デッキ<b>${E(a.opponent_deck_guess || "不明")}</b></span><span>相手<b>${E(a.opponent_name || "-")}</b></span>
-      <span>手番<b>${E(a.went_first || "不明")}</b></span><span>デッキ<b>${E(rec.deck_name || "指定なし")}</b></span></div></div>
-      <p>${E(a.overall_summary || "")}</p></div>`;
-    if (rec.model === "自動評価") h += `<div class="notice warn"><b>AIの検討を取得できなかったため、サイド差だけで形勢を表示しています。</b>少し時間をおいて、同じログでもう一度検討してください。</div>`;
-    if (turns.length) {
-      h += meterHTML(turns[turns.length - 1].score);
-      h += `<div class="chart">${chartSVG(turns, swings)}</div>
-        <div class="legend"><span><span style="color:${COL.me}">●</span> 自分の番</span><span><span style="color:${COL.opp}">●</span> 相手の番</span><span><span style="color:${COL.gold}">┆</span> 形勢が傾いたターン</span></div>`;
-    }
-    h += `<h2>形勢が傾いた場面</h2>`;
-    if (!swings.size) h += `<div class="empty">大きく形勢を損ねた場面はありませんでした。</div>`;
+      <div class="facts"><span>自分のデッキ<b>${E(rec.deck_name || "指定なし")}</b></span><span>相手のデッキ<b>${E(a.opponent_deck_guess || "不明")}</b></span>
+      <span>手番<b>${E(a.went_first || "不明")}</b></span><span>相手<b>${E(a.opponent_name || "-")}</b></span></div></div></div>`;
+    if (rec.model === "自動評価") h += `<div class="notice warn"><b>AIの評価を取得できなかったため、サイド差だけで形勢を表示しています。</b>少し時間をおいて、同じログでもう一度評価してください。</div>`;
+    if (a.overall_summary) h += `<h2>${why}</h2><p class="summary">${E(a.overall_summary)}</p>`;
+
+    h += `<h2>勝敗を分けたポイント</h2>`;
+    if (!swings.size) h += `<div class="empty">大きく形勢が傾いた場面はありませんでした。</div>`;
     for (const t of [...swings].sort((p, q) => p - q)) {
       const s = aiSw.get(t), row = turns.find((x) => x.turn === t) || {};
       const dd = (rec.deep_dives || {})[t];
       h += `<div class="swing"><div class="head"><span class="t">T${t}</span>${s ? `<span class="conf">確度 ${E(s.confidence || "-")}</span>` : ""}</div>`;
       if (s) {
-        h += `<p>${E(s.what_happened)}</p><span class="k">打つべきだった手</span><div class="play">${E(s.better_play)}</div>
+        h += `<p>${E(s.what_happened)}</p><span class="k">すべきだった手</span><div class="play">${E(s.better_play)}</div>
           <span class="k">理由</span><p style="margin-top:2px">${E(s.why)}</p>`;
         if ((s.alternative_line || []).length) h += `<span class="k">手順</span><ol>${s.alternative_line.map((x) => `<li>${E(x)}</li>`).join("")}</ol>`;
       } else {
-        h += `<p>グラフ上で形勢が大きく下がったターンです。${E(row.summary || "")}</p><span class="k">より良い手</span><div class="play">${E(row.better_play || "下のボタンで詳しく検討できます")}</div>`;
+        h += `<p>形勢が大きく下がったターンです。${E(row.situation || row.reason || "")}</p><span class="k">示唆</span><div class="play">${E(row.advice || row.better_play || "下のボタンで詳しく検討できます")}</div>`;
       }
       h += `<button class="btn" data-act="deep" data-turn="${t}" type="button">T${t} を深掘りする</button>
         <div class="deep" id="deep-${t}">${dd ? answerHTML(dd) : ""}</div></div>`;
     }
-    h += `<h2>棋譜と評価</h2><div class="record">`;
-    for (const t of turns) {
-      const pl = t.prizes_left;
-      h += `<details><summary><div class="r1"><span class="n">T${t.turn}</span><span class="who ${t.player === "自分" ? "me" : "opp"}">${E(t.player)}</span>
-        <span class="ev ${evClass(t.score)}">${Core.evalLabel(t.score)}</span>${swings.has(t.turn) ? `<span class="flag">◆ 転換点</span>` : ""}<span class="chev">▾</span></div>
-        <div class="sum">${E(t.summary)}${pl ? `<span class="pz">サイド残り 自分${pl[0]}・相手${pl[1]}</span>` : ""}</div></summary>
-        <div class="body">${boardHTML(t)}<p><span class="k2">評価の根拠</span>${E(t.reason)}</p>
-        ${(t.key_actions || []).length ? `<p><span class="k2">主な行動</span>${t.key_actions.map(E).join(" / ")}</p>` : ""}
-        ${t.better_play ? `<p class="better"><span class="k2">より良い手</span>${E(t.better_play)}</p>` : ""}</div></details>`;
+
+    if (turns.length) {
+      h += `<h2>ターン別の形勢</h2>` + meterHTML(turns[turns.length - 1].score);
+      h += `<div class="chart">${chartSVG(turns, swings)}</div>
+        <div class="legend"><span><span style="color:${COL.me}">●</span> 自分の番</span><span><span style="color:${COL.opp}">●</span> 相手の番</span><span><span style="color:${COL.gold}">┆</span> 形勢が傾いたターン</span></div>`;
+      h += `<h2>ターン別の評価と示唆</h2><div class="record">`;
+      for (const t of turns) {
+        const pl = t.prizes_left, mine = t.player === "自分";
+        const advice = t.advice || t.better_play || "", sit = t.situation || t.reason || t.summary || "";
+        h += `<div class="trow"><div class="r1"><span class="n">T${t.turn}</span><span class="who ${mine ? "me" : "opp"}">${E(t.player)}</span>
+          <span class="ev ${evClass(t.score)}">${Core.evalLabel(t.score)}</span>${swings.has(t.turn) ? `<span class="flag">◆ 転換点</span>` : ""}</div>
+          ${advice ? `<p class="advice ${mine ? "mine" : ""}">${E(advice)}</p>` : ""}
+          <p class="sit">${E(sit)}${pl ? `${sit ? "　" : ""}サイド残り 自分${pl[0]}・相手${pl[1]}` : ""}</p></div>`;
+      }
+      h += `</div>`;
     }
-    h += `</div>`;
     if ((a.lessons || []).length) h += `<h2>次の対戦に活かすこと</h2><ul class="plain">${a.lessons.map((x) => `<li>${E(x)}</li>`).join("")}</ul>`;
-    h += `<button class="btn" data-act="delete" type="button" style="margin-top:28px">この対局を削除</button>`;
+    h += `<div class="row2" style="margin-top:28px"><button class="btn" data-act="close" type="button">閉じる</button><button class="btn" data-act="delete" type="button">このバトルを削除</button></div>`;
     el.innerHTML = h;
     el.dataset.id = rec.id;
+  }
+
+  function closeResult() {
+    store.current_id = null; save();
+    renderResult(null);
+    if (resultFrom === "history") show("history"); else window.scrollTo(0, 0);
   }
 
   $("result").addEventListener("click", async (ev) => {
     const btn = ev.target.closest("button[data-act]"); if (!btn) return;
     const rec = store.analyses.find((r) => r.id === $("result").dataset.id);
-    if (btn.dataset.act === "new") { store.current_id = null; renderResult(null); window.scrollTo(0, 0); $("logText").focus(); return; }
+    if (btn.dataset.act === "close") { closeResult(); return; }
+    if (btn.dataset.act === "new") { resultFrom = "review"; store.current_id = null; renderResult(null); window.scrollTo(0, 0); $("logText").focus(); return; }
     if (!rec) return;
     if (btn.dataset.act === "delete") {
       if (btn.dataset.confirm !== "1") { btn.dataset.confirm = "1"; btn.textContent = "もう一度押すと削除します"; return; }
       store.analyses = store.analyses.filter((r) => r.id !== rec.id); store.current_id = null;
-      await save(); renderResult(null); toast("削除しました"); return;
+      await save(); toast("削除しました"); closeResult(); return;
     }
     if (btn.dataset.act === "deep") {
       if (needKey()) return;
@@ -401,7 +425,7 @@
   // ================================================================ 履歴
   function renderHistory() {
     const el = $("v-history"), recs = store.analyses;
-    if (!recs.length) { el.innerHTML = `<h2>履歴</h2><div class="empty">まだ検討した対局がありません。「検討」タブでバトルログを貼り付けると、ここに貯まっていきます。</div>`; return; }
+    if (!recs.length) { el.innerHTML = `<h2>バトル履歴</h2><div class="empty">まだ評価したバトルがありません。「バトル評価」タブでバトルログを貼り付けると、ここに貯まっていきます。</div>`; return; }
     const res = recs.map((r) => r.analysis.result);
     const w = res.filter((x) => x === "勝ち").length, l = res.filter((x) => x === "負け").length;
     const mu = {};
@@ -412,7 +436,7 @@
     let h = `<h2>成績</h2><div class="stats"><div>勝ち<b>${w}</b></div><div>負け<b>${l}</b></div><div>勝率<b>${w + l ? Math.round(w / (w + l) * 100) : 0}%</b></div></div>`;
     const muRows = Object.entries(mu).sort((p, q) => (q[1][0] + q[1][1]) - (p[1][0] + p[1][1]));
     if (muRows.length) h += `<h2>相手デッキ別</h2><div class="mu">${muRows.map(([k, v]) => `<div><span>${E(k)}</span><span><b>${v[0]}</b>勝<b>${v[1]}</b>敗</span></div>`).join("")}</div>`;
-    h += `<h2>対局一覧</h2><div class="list">${recs.map((r) => {
+    h += `<h2>バトル一覧</h2><div class="list">${recs.map((r) => {
       const c = r.analysis.result === "勝ち" ? COL.me : r.analysis.result === "負け" ? COL.opp : COL.muted;
       return `<button type="button" data-id="${E(r.id)}"><span class="res" style="color:${c}">${E(r.analysis.result || "-")}</span>
         <span class="main"><b>vs ${E(r.analysis.opponent_deck_guess || "不明")}</b><span class="sub">${E(r.created_at)}・${E(r.deck_name || "デッキ指定なし")}</span></span><span class="chev">›</span></button>`;
@@ -422,7 +446,7 @@
   $("v-history").addEventListener("click", (ev) => {
     const btn = ev.target.closest("button[data-id]"); if (!btn) return;
     const rec = store.analyses.find((r) => r.id === btn.dataset.id); if (!rec) return;
-    store.current_id = rec.id; show("review"); $("progress").hidden = true; renderResult(rec);
+    store.current_id = rec.id; resultFrom = "history"; show("review"); $("progress").hidden = true; renderResult(rec);
   });
 
   // ================================================================ デッキ
@@ -434,7 +458,7 @@
       `<button class="chip" type="button" data-deck="" aria-pressed="${!deckSel}">＋ 新しいデッキ</button>`;
     $("deckName").value = deckSel; $("deckText").value = deckSel ? store.decks[deckSel] : "";
     $("deckDelete").hidden = !deckSel;
-    updateDeckCount(); renderGuide();
+    updateDeckCount();
   }
   function updateDeckCount() {
     const t = $("deckText").value;
@@ -457,45 +481,49 @@
     await save(); renderDecks(); renderDeckSelect($("logDeck"), true); toast("削除しました");
   });
 
+  // ================================================================ デッキ別の戦い方・展開
   // 戦い方の解説・環境アドバイス：①環境を確認 → ②最新の環境メモを前提に回答
-  function adviceBlock(area, kind) {
-    const names = Object.keys(store.decks);
-    if (!names.length) { area.innerHTML = `<div class="empty">デッキを登録すると、今の環境に合わせた${kind === "guides" ? "戦い方" : "アドバイス"}を出せます。</div>`; return; }
-    const id = kind === "guides" ? "g" : "a";
-    const cur = area.querySelector("select") ? area.querySelector("select").value : (deckSel && names.includes(deckSel) ? deckSel : names[0]);
-    area.innerHTML = `<label class="f" for="${id}Deck">デッキ</label><select id="${id}Deck">${names.map((n) => `<option ${n === cur ? "selected" : ""}>${E(n)}</option>`).join("")}</select>
-      ${kind === "guides" ? `<label class="f" for="gFocus">特に知りたいこと（任意）</label><input type="text" id="gFocus" placeholder="後攻1ターン目の動き">` : ""}
-      <button class="btn primary" type="button" id="${id}Go">${kind === "guides" ? "戦い方を解説してもらう" : "アドバイスをもらう"}</button>
-      <p class="hint" id="${id}Note"></p><div id="${id}Out"></div>`;
-    const sel = $(id + "Deck"), out = $(id + "Out");
-    const showSaved = () => { out.innerHTML = answerHTML((store[kind] || {})[sel.value]); };
-    sel.addEventListener("change", showSaved); showSaved();
-    $(id + "Go").addEventListener("click", async (ev) => {
-      if (needKey()) return;
-      const btn = ev.currentTarget; btn.disabled = true;
-      const note = $(id + "Note");
-      const m = await ensureMeta((n) => { note.textContent = n; });
-      note.textContent = m.ok ? "" : m.detail;
-      const deck = store.decks[sel.value];
-      const prompt = kind === "guides" ? Core.deckGuidePrompt(deck, store.meta_notes, ($("gFocus") || {}).value || "") : Core.metaAdvicePrompt(deck, store.meta_notes);
-      const r = await streamInto(out, prompt, { search: !m.ok }); // 環境を更新できなかったときだけ、回答中に検索させる
-      btn.disabled = false;
-      if (r) { store[kind] = store[kind] || {}; store[kind][sel.value] = { text: r.text, model: r.model, at: r.at, searched: r.searched, sources: r.sources }; await save(); }
-    });
+  let strategyDeck = "";
+  function renderStrategy() {
+    const el = $("strategyArea"), names = Object.keys(store.decks);
+    if (!names.length) { el.innerHTML = `<div class="empty">「デッキ登録」でデッキを登録すると、デッキ別の戦い方・展開と、環境を踏まえたアドバイスを出せます。</div>`; return; }
+    if (!names.includes(strategyDeck)) strategyDeck = names.includes(store.settings.last_deck) ? store.settings.last_deck : names[0];
+    el.innerHTML = `<div class="chips">${names.map((n) => `<button class="chip" type="button" data-sdeck="${E(n)}" aria-pressed="${n === strategyDeck}">${E(n)}</button>`).join("")}</div>
+      <h2>戦い方・展開</h2>
+      <label class="f" for="gFocus">特に知りたいこと（任意）</label><input type="text" id="gFocus" placeholder="後攻1ターン目の動き、ドラパルト対面 など">
+      <button class="btn primary" type="button" data-go="guides">戦い方・展開を解説してもらう</button>
+      <p class="hint" id="guidesNote"></p><div id="guidesOut">${answerHTML((store.guides || {})[strategyDeck])}</div>
+      <h2>環境を踏まえたアドバイス</h2>
+      <p class="hint">「環境」タブの最新の大会結果をもとに、相性・対策・構築の調整案を出します。</p>
+      <button class="btn primary" type="button" data-go="meta_advice">アドバイスをもらう</button>
+      <p class="hint" id="meta_adviceNote"></p><div id="meta_adviceOut">${answerHTML((store.meta_advice || {})[strategyDeck])}</div>`;
   }
-  const renderGuide = () => adviceBlock($("guideArea"), "guides");
+  $("strategyArea").addEventListener("click", async (ev) => {
+    const chip = ev.target.closest("[data-sdeck]");
+    if (chip) { strategyDeck = chip.dataset.sdeck; renderStrategy(); return; }
+    const btn = ev.target.closest("[data-go]"); if (!btn) return;
+    if (needKey()) return;
+    const kind = btn.dataset.go, deckName = strategyDeck, deck = store.decks[deckName];
+    btn.disabled = true;
+    const note = $(kind + "Note");
+    const m = await ensureMeta((n) => { note.textContent = n; });
+    note.textContent = m.ok ? "" : m.detail;
+    const prompt = kind === "guides" ? Core.deckGuidePrompt(deck, store.meta_notes, ($("gFocus") || {}).value || "") : Core.metaAdvicePrompt(deck, store.meta_notes);
+    const r = await streamInto($(kind + "Out"), prompt, { search: !m.ok }); // 環境を更新できなかったときだけ、回答中に検索させる
+    btn.disabled = false;
+    if (r) { store[kind] = store[kind] || {}; store[kind][deckName] = { text: r.text, model: r.model, at: r.at, searched: r.searched, sources: r.sources }; await save(); }
+  });
 
   // ================================================================ 環境
   function renderMeta() {
     const age = Core.metaAgeDays(store);
     const src = store.meta_sources || [];
     $("metaStatus").innerHTML = `<div class="notice ${age === null || age > 7 ? "warn" : ""}"><b>最終更新：${E(store.meta_updated_at || "未設定")}${age !== null ? `（${age}日前）` : ""}</b><br>
-      ${age === null || age > 7 ? "古くなっています。検討やアドバイスの前に自動で更新されます。" : "検討・アドバイスは、この環境メモを前提に行います。"}
+      ${age === null || age > 7 ? "古くなっています。バトル評価やアドバイスの前に自動で更新されます。" : "バトル評価・アドバイスは、この環境メモを前提に行います。"}
       ${store.meta_source === "limitless" ? "<br>出典：Limitless Play の大会結果（アプリが直接集計）" : ""}
       ${src.length ? `<details class="sources"><summary>参照したページ（${src.length}）</summary><ul class="plain">${src.slice(0, 8).map((s) => `<li><a href="${E(s.url)}" target="_blank" rel="noopener">${E(s.title)}</a></li>`).join("")}</ul></details>` : ""}</div>`;
     $("metaNotes").innerHTML = md(store.meta_notes);
     $("metaEditText").value = store.meta_notes;
-    adviceBlock($("adviceArea"), "meta_advice");
   }
   $("metaRefresh").addEventListener("click", async (ev) => {
     if (needKey()) return;
